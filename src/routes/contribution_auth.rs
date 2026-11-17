@@ -1,0 +1,50 @@
+use crate::AppState;
+use axum::{
+    Router,
+    routing::{get, post},
+};
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/auth/csrf",
+            get(crate::controller::contribution_auth::csrf),
+        )
+        .route(
+            "/auth/login",
+            post(crate::controller::contribution_auth::login),
+        )
+        .route(
+            "/auth/logout",
+            post(crate::controller::contribution_auth::logout),
+        )
+        .route(
+            "/auth/session",
+            get(crate::controller::contribution_auth::session),
+        )
+        .route(
+            "/auth/sessions",
+            get(crate::controller::contribution_auth::sessions),
+        )
+        .route(
+            "/auth/sessions/{id}",
+            axum::routing::delete(crate::controller::contribution_auth::revoke_session),
+        )
+        .route(
+            "/auth/unlock",
+            post(crate::controller::contribution_auth::unlock),
+        )
+        .route(
+            "/auth/pin",
+            axum::routing::put(crate::controller::contribution_auth::set_pin)
+                .delete(crate::controller::contribution_auth::delete_pin),
+        )
+        .route(
+            "/auth/password",
+            axum::routing::put(crate::controller::contribution_auth::change_password),
+        )
+        .route(
+            "/admin-users",
+            post(crate::controller::contribution_auth::create_admin_user),
+        )
+}

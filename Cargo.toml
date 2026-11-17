@@ -1,0 +1,46 @@
+[package]
+name = "church_contributions_api"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/contributions-domain"]
+
+[dependencies]
+contributions-domain = { path = "crates/contributions-domain" }
+axum = { version = "0.8.9", features = ["macros", "json"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+sea-orm = { version = "2.0.2", features = ["runtime-tokio-rustls", "sqlx-postgres", "rbac"] }
+sea-orm-migration = { version = "2.0.2", features = ["runtime-tokio-rustls", "sqlx-postgres"] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+sha2 = "0.10"
+percent-encoding = "2"
+thiserror = "2"
+inventory = "0.3"
+anyhow = "1.0.104"
+chrono = { version = "0.4", features = ["serde"] }
+bcrypt = "0.19.3"
+lettre = { version = "0.11.23", features = ["tokio1", "smtp-transport", "builder", "tokio1-native-tls"] }
+configparser = "3.2.0"
+uuid = { version = "1.26", features = ["v4", "v7"] }
+tower-http = { version = "0.7.1", features = ["compression-gzip", "cors", "limit", "request-id", "timeout", "trace"] }
+async-trait = "0.1.92"
+clap = { version = "4.6.6", features = ["derive"] }
+argon2 = "0.6.0"
+validator = { version = "0.21.0", features = ["derive"] }
+dotenvy = "0.15.7"
+jsonwebtoken = { version = "12.0.0", default-features = false, features = ["aws_lc_rs"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "macros", "uuid", "chrono", "runtime-tokio", "tls-rustls", "sqlx-toml"] }
+utoipa = "6.0.0"
+utoipa-swagger-ui = { version = "10.0.2", features = ["axum"] }
+
+[dev-dependencies]
+sea-orm = { version = "2.0.2", features = ["sqlx-sqlite"] }
+sea-orm-migration = { version = "2.0.2", features = ["sqlx-sqlite"] }
+tower = { version = "0.5", features = ["util"] }
