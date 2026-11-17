@@ -38,10 +38,10 @@ pub(crate) async fn payment_json(db: &PgPool, p: &Principal, id: Uuid) -> Result
     let member_id: Uuid = row.get("member_id");
     let project_id: Option<Uuid> = row.get("project_id");
     full_finance_access(db, p, member_id).await?;
-    if let Some(project_id) = project_id {
-        if !project_access(db, p, project_id).await? {
-            return Err(Problem::not_found());
-        }
+    if let Some(project_id) = project_id
+        && !project_access(db, p, project_id).await?
+    {
+        return Err(Problem::not_found());
     }
     let allocations=sqlx::query("SELECT a.id,a.pledge_id,a.period_start,a.period_end,a.amount,a.version,a.created_at,a.updated_at,x.project_id FROM allocations a JOIN pledges x ON x.id=a.pledge_id WHERE a.payment_id=$1 ORDER BY a.period_end,a.period_start,a.pledge_id")
         .bind(id).fetch_all(db).await.map_err(db_error)?;

@@ -181,23 +181,24 @@ fn periods_for(
     let mut paused = false;
     let mut cancelled = false;
     while start <= horizon && pledge.end_date.is_none_or(|end| start <= end) && !cancelled {
-        if let Some(event) = events.get(event_index) {
-            if event.effective_date == start {
-                match (paused, event.action) {
-                    (false, StateAction::Pause) => {
-                        paused = true;
-                        event_index += 1;
-                        continue;
-                    }
-                    (true, StateAction::Resume) => {
-                        paused = false;
-                        event_index += 1;
-                        continue;
-                    }
-                    _ => {}
+        if let Some(event) = events.get(event_index)
+            && event.effective_date == start
+        {
+            match (paused, event.action) {
+                (false, StateAction::Pause) => {
+                    paused = true;
+                    event_index += 1;
+                    continue;
                 }
+                (true, StateAction::Resume) => {
+                    paused = false;
+                    event_index += 1;
+                    continue;
+                }
+                _ => {}
             }
         }
+
         if paused {
             let Some(event) = events.get(event_index) else {
                 break;
@@ -217,13 +218,13 @@ fn periods_for(
             .end_date
             .map_or(end, |pledge_end| end.min(pledge_end));
         let mut cancelled_here = false;
-        if let Some(event) = events.get(event_index) {
-            if event.effective_date <= end {
-                if event.action == StateAction::Cancel && event.effective_date == end {
-                    cancelled_here = true;
-                } else {
-                    return Err(AccountingError::InvalidPledge);
-                }
+        if let Some(event) = events.get(event_index)
+            && event.effective_date <= end
+        {
+            if event.action == StateAction::Cancel && event.effective_date == end {
+                cancelled_here = true;
+            } else {
+                return Err(AccountingError::InvalidPledge);
             }
         }
         if versions

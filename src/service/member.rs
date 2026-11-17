@@ -28,29 +28,29 @@ pub(crate) async fn member_json(
     } else {
         let mut b = Balance::default();
         for pledge in &pledges {
-            if project_access(db, p, pledge.project_id).await? {
-                if let Some(item) = calculation.pledge_balances.get(&pledge.id) {
-                    b.demand = b
-                        .demand
-                        .checked_add(item.demand)
-                        .ok_or_else(|| Problem::internal("overflow"))?;
-                    b.paid = b
-                        .paid
-                        .checked_add(item.paid)
-                        .ok_or_else(|| Problem::internal("overflow"))?;
-                    b.debt = b
-                        .debt
-                        .checked_add(item.debt)
-                        .ok_or_else(|| Problem::internal("overflow"))?;
-                    b.due_today = b
-                        .due_today
-                        .checked_add(item.due_today)
-                        .ok_or_else(|| Problem::internal("overflow"))?;
-                    b.advance = b
-                        .advance
-                        .checked_add(item.advance)
-                        .ok_or_else(|| Problem::internal("overflow"))?;
-                }
+            if project_access(db, p, pledge.project_id).await?
+                && let Some(item) = calculation.pledge_balances.get(&pledge.id)
+            {
+                b.demand = b
+                    .demand
+                    .checked_add(item.demand)
+                    .ok_or_else(|| Problem::internal("overflow"))?;
+                b.paid = b
+                    .paid
+                    .checked_add(item.paid)
+                    .ok_or_else(|| Problem::internal("overflow"))?;
+                b.debt = b
+                    .debt
+                    .checked_add(item.debt)
+                    .ok_or_else(|| Problem::internal("overflow"))?;
+                b.due_today = b
+                    .due_today
+                    .checked_add(item.due_today)
+                    .ok_or_else(|| Problem::internal("overflow"))?;
+                b.advance = b
+                    .advance
+                    .checked_add(item.advance)
+                    .ok_or_else(|| Problem::internal("overflow"))?;
             }
         }
         b
@@ -80,12 +80,11 @@ pub(crate) async fn member_json(
             if let Some(pledge) = pledges
                 .iter()
                 .find(|pledge| pledge.id == allocation.pledge_id)
+                && project_access(db, p, pledge.project_id).await?
             {
-                if project_access(db, p, pledge.project_id).await? {
-                    scoped_total_given = scoped_total_given
-                        .checked_add(allocation.amount)
-                        .ok_or_else(|| Problem::internal("money overflow"))?;
-                }
+                scoped_total_given = scoped_total_given
+                    .checked_add(allocation.amount)
+                    .ok_or_else(|| Problem::internal("money overflow"))?;
             }
         }
     }

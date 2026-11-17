@@ -40,10 +40,10 @@ pub(crate) async fn create_payment(
         return Err(Problem::validation());
     }
     full_finance_access(&state.contributions_db, &p, body.member_id).await?;
-    if let Some(id) = body.project_id {
-        if !project_access(&state.contributions_db, &p, id).await? {
-            return Err(Problem::forbidden());
-        }
+    if let Some(id) = body.project_id
+        && !project_access(&state.contributions_db, &p, id).await?
+    {
+        return Err(Problem::forbidden());
     }
     let key = req_key(&headers)?;
     let fingerprint = hash(&format!(
@@ -164,10 +164,10 @@ pub(crate) async fn void_payment(
             .map_err(db_error)?
             .ok_or_else(Problem::not_found)?;
     full_finance_access(&state.contributions_db, &p, member_id).await?;
-    if let Some(project_id) = project_id {
-        if !project_access(&state.contributions_db, &p, project_id).await? {
-            return Err(Problem::forbidden());
-        }
+    if let Some(project_id) = project_id
+        && !project_access(&state.contributions_db, &p, project_id).await?
+    {
+        return Err(Problem::forbidden());
     }
     let key = req_key(&headers)?;
     let fingerprint = hash(&format!(
@@ -246,10 +246,10 @@ pub(crate) async fn preview_payment(
         return Err(Problem::validation());
     }
     full_finance_access(&state.contributions_db, &p, body.member_id).await?;
-    if let Some(project_id) = body.project_id {
-        if !project_access(&state.contributions_db, &p, project_id).await? {
-            return Err(Problem::forbidden());
-        }
+    if let Some(project_id) = body.project_id
+        && !project_access(&state.contributions_db, &p, project_id).await?
+    {
+        return Err(Problem::forbidden());
     }
     let (pledges, mut payments) =
         load_ledger(&state.contributions_db, p.organization_id, body.member_id).await?;

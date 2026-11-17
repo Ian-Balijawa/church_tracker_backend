@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help up down db-shell migrate run dev check fmt test verify
+.PHONY: help up down db-shell migrate run dev check fmt fix test verify ready
 
 help:
 	@printf '%s\n' \
@@ -9,7 +9,9 @@ help:
 		'make migrate   Apply church tracker migrations' \
 		'make run       Start the API' \
 		'make dev       Start services, migrate, and run the API' \
-		'make verify    Format check, Clippy, and tests'
+		'make fix       Auto-fix Clippy errors and format the code' \
+		'make verify    Format check, Clippy, and tests' \
+		'make ready     Fix, then verify'
 
 up:
 	docker compose up -d --wait
@@ -35,6 +37,10 @@ check:
 fmt:
 	cargo fmt
 
+fix:
+	cargo clippy --fix --allow-dirty --allow-staged --all-targets
+	cargo fmt
+
 test:
 	cargo test --workspace
 
@@ -42,3 +48,5 @@ verify:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
 	cargo test --workspace
+
+ready: fix verify

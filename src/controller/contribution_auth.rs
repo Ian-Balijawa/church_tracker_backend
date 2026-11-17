@@ -188,15 +188,15 @@ pub(crate) async fn revoke_session(
         .await
         .map_err(Problem::internal)?;
     let mut response = StatusCode::NO_CONTENT.into_response();
-    if id == p.session_id {
-        if let Some(value) = make_cookie(
+    if id == p.session_id
+        && let Some(value) = make_cookie(
             SESSION_COOKIE,
             "",
             state.config.app_env == "production",
             true,
-        ) {
-            response.headers_mut().append(header::SET_COOKIE, value);
-        }
+        )
+    {
+        response.headers_mut().append(header::SET_COOKIE, value);
     }
     Ok(no_store(response))
 }
