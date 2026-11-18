@@ -35,7 +35,11 @@ pub(crate) fn parse_frequency(value: &str) -> Result<Frequency, Problem> {
         "daily" => Ok(Frequency::Daily),
         "weekly" => Ok(Frequency::Weekly),
         "monthly" => Ok(Frequency::Monthly),
-        _ => Err(Problem::validation()),
+        _ => Err(Problem::field_validation(
+            "/frequency",
+            "invalid_frequency",
+            "Frequency must be daily, weekly, or monthly.",
+        )),
     }
 }
 

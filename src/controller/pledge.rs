@@ -27,8 +27,19 @@ pub(crate) async fn create_pledge(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
-    if !valid_money(body.amount, true) || body.end_date.is_some_and(|end| end < body.start_date) {
-        return Err(Problem::validation());
+    if !valid_money(body.amount, true) {
+        return Err(Problem::field_validation(
+            "/amount",
+            "invalid_amount",
+            "Amount must be a positive whole number of shillings.",
+        ));
+    }
+    if body.end_date.is_some_and(|end| end < body.start_date) {
+        return Err(Problem::field_validation(
+            "/endDate",
+            "invalid_date_range",
+            "End date must be the same as or later than start date.",
+        ));
     }
     parse_frequency(&body.frequency)?;
     full_finance_access(&state.contributions_db, &p, body.member_id).await?;
@@ -165,13 +176,23 @@ async fn transition_pledge(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
-    if body.effective_date > today()
-        || body
-            .reason
-            .as_deref()
-            .is_some_and(|r| r.chars().count() > 2000)
+    if body.effective_date > today() {
+        return Err(Problem::field_validation(
+            "/effectiveDate",
+            "invalid_date",
+            "Effective date cannot be in the future.",
+        ));
+    }
+    if body
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.chars().count() > 2000)
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/reason",
+            "too_long",
+            "Reason cannot exceed 2000 characters.",
+        ));
     }
     let (member_id, project_id) =
         crate::repository::pledge::owner(&state.contributions_db, p.organization_id, id)
@@ -304,13 +325,23 @@ pub(crate) async fn add_pledge_version(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
-    if !valid_money(body.amount, true)
-        || body
-            .reason
-            .as_deref()
-            .is_some_and(|r| r.chars().count() > 2000)
+    if !valid_money(body.amount, true) {
+        return Err(Problem::field_validation(
+            "/amount",
+            "invalid_amount",
+            "Amount must be a positive whole number of shillings.",
+        ));
+    }
+    if body
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.chars().count() > 2000)
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/reason",
+            "too_long",
+            "Reason cannot exceed 2000 characters.",
+        ));
     }
     let (member_id, project_id) =
         crate::repository::pledge::owner(&state.contributions_db, p.organization_id, id)
@@ -354,7 +385,11 @@ pub(crate) async fn add_pledge_version(
             .is_some_and(|end| body.effective_from > end)
         || row.get::<&str, _>("status") == "cancelled"
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/effectiveFrom",
+            "invalid_effective_date",
+            "A new amount must take effect after the current pledge start and before its end date. The pledge must not be cancelled.",
+        ));
     }
     sqlx::query(
         "INSERT INTO pledge_versions(id,pledge_id,amount,effective_from) VALUES($1,$2,$3,$4)",
@@ -390,7 +425,16 @@ pub(crate) async fn add_pledge_version(
     resource["dueToday"] = json!(b.due_today);
     resource["advance"] = json!(b.advance);
     resource["updatedAt"] = json!(Utc::now());
-    resource["versions"].as_array_mut().ok_or_else(Problem::validation)?.push(json!({"id":body.id,"amount":body.amount,"effectiveFrom":body.effective_from,"createdAt":Utc::now()}));
+    resource["versions"]
+        .as_array_mut()
+        .ok_or_else(|| {
+            Problem::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_response_state",
+                "Pledge versions could not be updated.",
+            )
+        })?
+        .push(json!({"id":body.id,"amount":body.amount,"effectiveFrom":body.effective_from,"createdAt":Utc::now()}));
     let envelope = json!({"data":resource});
     let tag = etag(id, version + 1);
     save_replay(

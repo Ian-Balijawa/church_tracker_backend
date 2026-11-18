@@ -28,12 +28,37 @@ pub(crate) async fn create_project(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_manager(&p)?;
-    if !valid_name(&body.name)
-        || body.description.as_deref().is_some_and(|v| v.len() > 2000)
-        || !valid_money(body.target, false)
-        || body.end_date.is_some_and(|end| end < body.start_date)
+    if !valid_name(&body.name) {
+        return Err(Problem::field_validation(
+            "/name",
+            "invalid_name",
+            "Name must contain between 1 and 200 characters.",
+        ));
+    }
+    if body
+        .description
+        .as_deref()
+        .is_some_and(|value| value.len() > 2000)
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/description",
+            "too_long",
+            "Description cannot exceed 2000 characters.",
+        ));
+    }
+    if !valid_money(body.target, false) {
+        return Err(Problem::field_validation(
+            "/target",
+            "invalid_amount",
+            "Target must be a whole-number amount of 0 or more shillings.",
+        ));
+    }
+    if body.end_date.is_some_and(|end| end < body.start_date) {
+        return Err(Problem::field_validation(
+            "/endDate",
+            "invalid_date_range",
+            "End date must be the same as or later than start date.",
+        ));
     }
     if !church_access(&state.contributions_db, &p, body.owner_church_id).await? {
         return Err(Problem::forbidden());

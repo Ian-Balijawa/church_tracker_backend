@@ -27,8 +27,23 @@ pub(crate) async fn create_church(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_manager(&p)?;
-    if !valid_name(&body.name) || body.phone.as_deref().is_some_and(|v| !valid_phone(v)) {
-        return Err(Problem::validation());
+    if !valid_name(&body.name) {
+        return Err(Problem::field_validation(
+            "/name",
+            "invalid_name",
+            "Name must contain between 1 and 200 characters.",
+        ));
+    }
+    if body
+        .phone
+        .as_deref()
+        .is_some_and(|phone| !valid_phone(phone))
+    {
+        return Err(Problem::field_validation(
+            "/phone",
+            "invalid_phone",
+            "Enter a valid phone number or omit phone.",
+        ));
     }
     let key = req_key(&headers)?;
     let fingerprint = hash(&format!(
@@ -115,14 +130,24 @@ pub(crate) async fn patch_church(
     if !church_access(&state.contributions_db, &p, id).await? {
         return Err(Problem::not_found());
     }
-    if body.name.as_deref().is_some_and(|n| !valid_name(n))
-        || body
-            .phone
-            .as_ref()
-            .and_then(|p| p.as_deref())
-            .is_some_and(|p| !valid_phone(p))
+    if body.name.as_deref().is_some_and(|name| !valid_name(name)) {
+        return Err(Problem::field_validation(
+            "/name",
+            "invalid_name",
+            "Name must contain between 1 and 200 characters.",
+        ));
+    }
+    if body
+        .phone
+        .as_ref()
+        .and_then(|phone| phone.as_deref())
+        .is_some_and(|phone| !valid_phone(phone))
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/phone",
+            "invalid_phone",
+            "Enter a valid phone number or set phone to null.",
+        ));
     }
     let key = req_key(&headers)?;
     let mut tx = state.contributions_db.begin().await.map_err(db_error)?;

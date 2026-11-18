@@ -13,6 +13,90 @@ use sqlx::Row;
 use std::net::SocketAddr;
 use uuid::Uuid;
 
+pub(crate) async fn register(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ContractJson(body): ContractJson<RegisterBody>,
+) -> Result<Response, Problem> {
+    csrf_check(&state, &headers, None)?;
+    let account = crate::service::contribution_auth::register(&state, body).await?;
+    Ok(item(account, StatusCode::CREATED, None, None))
+}
+
+pub(crate) async fn request_phone_otp(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ContractJson(body): ContractJson<PhoneBody>,
+) -> Result<Response, Problem> {
+    csrf_check(&state, &headers, None)?;
+    crate::service::contribution_auth::request_phone_otp(&state, &body.phone).await?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+pub(crate) async fn verify_phone(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ContractJson(body): ContractJson<VerifyOtpBody>,
+) -> Result<Response, Problem> {
+    csrf_check(&state, &headers, None)?;
+    let phone = body
+        .phone
+        .ok_or_else(|| Problem::field_validation("/phone", "required", "Phone is required."))?;
+    if body.email.is_some() {
+        return Err(Problem::field_validation(
+            "/email",
+            "unexpected_field",
+            "This request verifies a phone number; remove the email field.",
+        ));
+    }
+    if body.otp.len() != 5 || !body.otp.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Problem::field_validation(
+            "/otp",
+            "invalid_otp_format",
+            "OTP must contain exactly 5 digits.",
+        ));
+    }
+    crate::service::contribution_auth::verify_phone(&state, &phone, &body.otp).await?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+pub(crate) async fn request_email_otp(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ContractJson(body): ContractJson<EmailBody>,
+) -> Result<Response, Problem> {
+    let p = write_principal(&state, &headers).await?;
+    crate::service::contribution_auth::request_email_otp(&state, p.id, &body.email).await?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+pub(crate) async fn verify_email(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ContractJson(body): ContractJson<VerifyOtpBody>,
+) -> Result<Response, Problem> {
+    let p = write_principal(&state, &headers).await?;
+    let email = body
+        .email
+        .ok_or_else(|| Problem::field_validation("/email", "required", "Email is required."))?;
+    if body.phone.is_some() {
+        return Err(Problem::field_validation(
+            "/phone",
+            "unexpected_field",
+            "This request verifies an email address; remove the phone field.",
+        ));
+    }
+    if body.otp.len() != 5 || !body.otp.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Problem::field_validation(
+            "/otp",
+            "invalid_otp_format",
+            "OTP must contain exactly 5 digits.",
+        ));
+    }
+    crate::service::contribution_auth::verify_email(&state, p.id, &email, &body.otp).await?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
 pub(crate) async fn csrf(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -45,7 +129,14 @@ pub(crate) async fn login(
     ContractJson(body): ContractJson<LoginBody>,
 ) -> Result<Response, Problem> {
     csrf_check(&state, &headers, None)?;
-    if crate::service::redis::is_login_limited(&state.redis, &body.phone, &remote.ip().to_string())
+    let phone = crate::service::contribution_auth::format_phone(&body.phone).ok_or_else(|| {
+        Problem::field_validation(
+            "/phone",
+            "invalid_phone",
+            "Enter a valid Ugandan mobile number.",
+        )
+    })?;
+    if crate::service::redis::is_login_limited(&state.redis, &phone, &remote.ip().to_string())
         .await
         .map_err(Problem::internal)?
     {
@@ -55,8 +146,8 @@ pub(crate) async fn login(
             "Too many attempts. Try again later.",
         ));
     }
-    let row = sqlx::query("SELECT id, organization_id, name, phone, password_hash, role, avatar_url, version, updated_at FROM users WHERE phone=$1 AND status='active'")
-        .bind(&body.phone).fetch_optional(&state.contributions_db).await.map_err(Problem::internal)?;
+    let row = sqlx::query("SELECT id, organization_id, name, phone, password_hash, role, avatar_url, version, updated_at, email, email_verified_at FROM users WHERE phone=$1 AND status='active'")
+        .bind(&phone).fetch_optional(&state.contributions_db).await.map_err(Problem::internal)?;
     let verified = if let Some(ref row) = row {
         crate::service::contribution_auth::verify_password(row.get("password_hash"), &body.password)
             .await
@@ -64,26 +155,18 @@ pub(crate) async fn login(
         false
     };
     if !verified {
-        crate::service::redis::record_login_failure(
-            &state.redis,
-            &body.phone,
-            &remote.ip().to_string(),
-        )
-        .await
-        .map_err(Problem::internal)?;
+        crate::service::redis::record_login_failure(&state.redis, &phone, &remote.ip().to_string())
+            .await
+            .map_err(Problem::internal)?;
         return Err(Problem::new(
             StatusCode::UNAUTHORIZED,
             "invalid_credentials",
             "Invalid credentials.",
         ));
     }
-    crate::service::redis::clear_login_failures(
-        &state.redis,
-        &body.phone,
-        &remote.ip().to_string(),
-    )
-    .await
-    .map_err(Problem::internal)?;
+    crate::service::redis::clear_login_failures(&state.redis, &phone, &remote.ip().to_string())
+        .await
+        .map_err(Problem::internal)?;
     let row = row.ok_or_else(Problem::unauthorized)?;
     let user_id: Uuid = row.get("id");
     let token = random_token();
@@ -95,7 +178,7 @@ pub(crate) async fn login(
         crate::repository::contribution_auth::church_ids(&state.contributions_db, user_id)
             .await
             .map_err(Problem::internal)?;
-    let user = json!({"id":user_id,"name":row.get::<String,_>("name"),"phone":row.get::<String,_>("phone"),"avatarUrl":row.get::<Option<String>,_>("avatar_url"),"role":row.get::<String,_>("role"),"churchIds":church_ids,"updatedAt":row.get::<DateTime<Utc>,_>("updated_at"),"version":row.get::<i64,_>("version")});
+    let user = json!({"id":user_id,"name":row.get::<String,_>("name"),"phone":row.get::<String,_>("phone"),"email":row.get::<Option<String>,_>("email"),"emailVerified":row.get::<Option<DateTime<Utc>>,_>("email_verified_at").is_some(),"avatarUrl":row.get::<Option<String>,_>("avatar_url"),"role":row.get::<String,_>("role"),"churchIds":church_ids,"updatedAt":row.get::<DateTime<Utc>,_>("updated_at"),"version":row.get::<i64,_>("version")});
     let mut response = item(
         json!({"user":user,"session":{"id":session_id,"createdAt":Utc::now(),"current":true},"csrfToken":csrf_token}),
         StatusCode::OK,
@@ -122,7 +205,7 @@ pub(crate) async fn session(
 ) -> Result<Response, Problem> {
     let p = principal(&state, &headers).await?;
     let row =
-        sqlx::query("SELECT name,phone,role,avatar_url,updated_at,version FROM users WHERE id=$1")
+        sqlx::query("SELECT name,phone,email,email_verified_at,role,avatar_url,updated_at,version FROM users WHERE id=$1")
             .bind(p.id)
             .fetch_one(&state.contributions_db)
             .await
@@ -131,7 +214,7 @@ pub(crate) async fn session(
         crate::repository::contribution_auth::church_ids(&state.contributions_db, p.id)
             .await
             .map_err(Problem::internal)?;
-    let user = json!({"id":p.id,"name":row.get::<String,_>("name"),"phone":row.get::<String,_>("phone"),"avatarUrl":row.get::<Option<String>,_>("avatar_url"),"role":row.get::<String,_>("role"),"churchIds":church_ids,"updatedAt":row.get::<DateTime<Utc>,_>("updated_at"),"version":row.get::<i64,_>("version")});
+    let user = json!({"id":p.id,"name":row.get::<String,_>("name"),"phone":row.get::<String,_>("phone"),"email":row.get::<Option<String>,_>("email"),"emailVerified":row.get::<Option<DateTime<Utc>>,_>("email_verified_at").is_some(),"avatarUrl":row.get::<Option<String>,_>("avatar_url"),"role":row.get::<String,_>("role"),"churchIds":church_ids,"updatedAt":row.get::<DateTime<Utc>,_>("updated_at"),"version":row.get::<i64,_>("version")});
     Ok(item(
         json!({"user":user,"session":{"id":p.session_id,"current":true},"csrfToken":p.csrf_token}),
         StatusCode::OK,
@@ -209,7 +292,11 @@ pub(crate) async fn unlock(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     if !matches!(body.method.as_str(), "password" | "pin") {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/method",
+            "invalid_method",
+            "Method must be either password or pin.",
+        ));
     }
     if crate::service::redis::request_limited(
         &state.redis,
@@ -260,7 +347,11 @@ pub(crate) async fn set_pin(
     let p = write_principal(&state, &headers).await?;
     if !(4..=12).contains(&body.new_pin.len()) || !body.new_pin.bytes().all(|b| b.is_ascii_digit())
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/newPin",
+            "invalid_pin",
+            "PIN must contain 4 to 12 digits.",
+        ));
     }
     verify_current_password(&state, &p, &body.current_password).await?;
     let hashed = crate::service::contribution_auth::hash_password(&body.new_pin)
@@ -282,7 +373,11 @@ pub(crate) async fn delete_pin(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     if body.new_password.is_some() {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/newPassword",
+            "unexpected_field",
+            "Do not include newPassword when deleting a PIN.",
+        ));
     }
     verify_current_password(&state, &p, &body.current_password).await?;
     sqlx::query("UPDATE users SET pin_hash=NULL,updated_at=now(),version=version+1 WHERE id=$1")
@@ -298,9 +393,15 @@ pub(crate) async fn change_password(
     ContractJson(body): ContractJson<PasswordBody>,
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
-    let new = body.new_password.ok_or_else(Problem::validation)?;
+    let new = body.new_password.ok_or_else(|| {
+        Problem::field_validation("/newPassword", "required", "New password is required.")
+    })?;
     if new.len() < 8 || new.len() > 1024 {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/newPassword",
+            "invalid_length",
+            "Password must contain between 8 and 1024 characters.",
+        ));
     }
     verify_current_password(&state, &p, &body.current_password).await?;
     let hashed = crate::service::contribution_auth::hash_password(&new)
@@ -356,14 +457,26 @@ pub(crate) async fn create_admin_user(
     if p.role != "organization_admin" {
         return Err(Problem::forbidden());
     }
-    if body.name.trim().is_empty()
-        || body.name.chars().count() > 200
-        || body.password.len() < 8
-        || body.phone.len() < 8
-        || !body.phone.starts_with('+')
-        || !body.phone[1..].bytes().all(|b| b.is_ascii_digit())
-    {
-        return Err(Problem::validation());
+    let phone = crate::service::contribution_auth::format_phone(&body.phone).ok_or_else(|| {
+        Problem::field_validation(
+            "/phone",
+            "invalid_phone",
+            "Enter a valid Ugandan mobile number.",
+        )
+    })?;
+    if body.name.trim().is_empty() || body.name.chars().count() > 200 {
+        return Err(Problem::field_validation(
+            "/name",
+            "invalid_length",
+            "Name must contain between 1 and 200 characters.",
+        ));
+    }
+    if body.password.len() < 8 || body.password.len() > 1024 {
+        return Err(Problem::field_validation(
+            "/password",
+            "invalid_length",
+            "Password must contain between 8 and 1024 characters.",
+        ));
     }
     let hashed = crate::service::contribution_auth::hash_password(&body.password)
         .await
@@ -374,13 +487,13 @@ pub(crate) async fn create_admin_user(
         .begin()
         .await
         .map_err(Problem::internal)?;
-    sqlx::query("INSERT INTO users(id,organization_id,name,phone,password_hash,role) VALUES($1,$2,$3,$4,$5,'organization_admin')")
-        .bind(id).bind(p.organization_id).bind(body.name.trim()).bind(&body.phone).bind(hashed).execute(&mut *tx).await.map_err(|error|if error.as_database_error().is_some_and(|e|e.is_unique_violation()){Problem::conflict()}else{Problem::internal(error)})?;
+    sqlx::query("INSERT INTO users(id,organization_id,name,phone,password_hash,role,phone_verified_at) VALUES($1,$2,$3,$4,$5,'organization_admin',now())")
+        .bind(id).bind(p.organization_id).bind(body.name.trim()).bind(&phone).bind(hashed).execute(&mut *tx).await.map_err(|error|if error.as_database_error().is_some_and(|e|e.is_unique_violation()){Problem::conflict()}else{Problem::internal(error)})?;
     sqlx::query("INSERT INTO audit(id,organization_id,actor_id,action,entity_type,entity_id,request_id) VALUES($1,$2,$3,'create','user',$4,$5)")
         .bind(Uuid::new_v4()).bind(p.organization_id).bind(p.id).bind(id).bind(Uuid::new_v4()).execute(&mut *tx).await.map_err(Problem::internal)?;
     tx.commit().await.map_err(Problem::internal)?;
     Ok(item(
-        json!({"id":id,"name":body.name.trim(),"phone":body.phone,"role":"organization_admin","churchIds":[],"status":"active","createdAt":Utc::now(),"updatedAt":Utc::now(),"version":1}),
+        json!({"id":id,"name":body.name.trim(),"phone":phone,"role":"organization_admin","churchIds":[],"status":"active","createdAt":Utc::now(),"updatedAt":Utc::now(),"version":1}),
         StatusCode::CREATED,
         Some(crate::http::contribution::etag(id, 1)),
         Some(format!("/api/v1/users/{id}")),

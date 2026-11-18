@@ -10,6 +10,35 @@ pub(crate) struct AdminUserBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RegisterBody {
+    pub(crate) name: String,
+    pub(crate) phone: String,
+    pub(crate) password: String,
+    pub(crate) email: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct VerifyOtpBody {
+    pub(crate) phone: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) otp: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EmailBody {
+    pub(crate) email: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PhoneBody {
+    pub(crate) phone: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LoginBody {
     pub(crate) phone: String,
     pub(crate) password: String,

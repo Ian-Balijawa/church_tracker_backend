@@ -129,7 +129,11 @@ pub(crate) fn db_error(error: sqlx::Error) -> Problem {
             return Problem::conflict();
         }
         if error.is_foreign_key_violation() {
-            return Problem::validation();
+            return Problem::field_validation(
+                "/",
+                "invalid_reference",
+                "A referenced record does not exist or is no longer available.",
+            );
         }
     }
     Problem::internal(error)

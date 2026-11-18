@@ -27,8 +27,19 @@ pub(crate) async fn create_member(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_manager(&p)?;
-    if !valid_name(&body.name) || !valid_phone(&body.phone) {
-        return Err(Problem::validation());
+    if !valid_name(&body.name) {
+        return Err(Problem::field_validation(
+            "/name",
+            "invalid_name",
+            "Name must contain between 1 and 200 characters.",
+        ));
+    }
+    if !valid_phone(&body.phone) {
+        return Err(Problem::field_validation(
+            "/phone",
+            "invalid_phone",
+            "Enter a valid phone number.",
+        ));
     }
     if !church_access(&state.contributions_db, &p, body.home_church_id).await? {
         return Err(Problem::forbidden());

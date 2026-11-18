@@ -29,15 +29,37 @@ pub(crate) async fn create_payment(
 ) -> Result<Response, Problem> {
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
-    if !valid_money(body.amount, true)
-        || !valid_date(body.date)
-        || !matches!(body.method.as_str(), "cash" | "mobile_money" | "bank")
-        || body
-            .note
-            .as_deref()
-            .is_some_and(|s| s.chars().count() > 2000)
+    if !valid_money(body.amount, true) {
+        return Err(Problem::field_validation(
+            "/amount",
+            "invalid_amount",
+            "Amount must be a positive whole number of shillings.",
+        ));
+    }
+    if !valid_date(body.date) {
+        return Err(Problem::field_validation(
+            "/date",
+            "invalid_date",
+            "Payment date cannot be in the future.",
+        ));
+    }
+    if !matches!(body.method.as_str(), "cash" | "mobile_money" | "bank") {
+        return Err(Problem::field_validation(
+            "/method",
+            "invalid_method",
+            "Method must be cash, mobile_money, or bank.",
+        ));
+    }
+    if body
+        .note
+        .as_deref()
+        .is_some_and(|note| note.chars().count() > 2000)
     {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/note",
+            "too_long",
+            "Note cannot exceed 2000 characters.",
+        ));
     }
     full_finance_access(&state.contributions_db, &p, body.member_id).await?;
     if let Some(id) = body.project_id
@@ -156,7 +178,11 @@ pub(crate) async fn void_payment(
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
     if !valid_name(&body.reason) {
-        return Err(Problem::validation());
+        return Err(Problem::field_validation(
+            "/reason",
+            "invalid_reason",
+            "Enter a reason between 1 and 200 characters.",
+        ));
     }
     let (member_id, project_id) =
         crate::repository::payment::owner(&state.contributions_db, p.organization_id, id)
@@ -238,12 +264,26 @@ pub(crate) async fn preview_payment(
     let p = write_principal(&state, &headers).await?;
     require_finance(&p)?;
     let as_of = body.as_of.unwrap_or_else(today);
-    if !valid_money(body.amount, true)
-        || !valid_date(body.date)
-        || as_of < body.date
-        || as_of > today()
-    {
-        return Err(Problem::validation());
+    if !valid_money(body.amount, true) {
+        return Err(Problem::field_validation(
+            "/amount",
+            "invalid_amount",
+            "Amount must be a positive whole number of shillings.",
+        ));
+    }
+    if !valid_date(body.date) {
+        return Err(Problem::field_validation(
+            "/date",
+            "invalid_date",
+            "Payment date cannot be in the future.",
+        ));
+    }
+    if as_of < body.date || as_of > today() {
+        return Err(Problem::field_validation(
+            "/asOf",
+            "invalid_as_of_date",
+            "asOf must be between the payment date and today.",
+        ));
     }
     full_finance_access(&state.contributions_db, &p, body.member_id).await?;
     if let Some(project_id) = body.project_id

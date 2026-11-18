@@ -1,12 +1,34 @@
 use serde_json::{Map, Value, json};
 use utoipa::openapi::OpenApi;
 
+fn auth_request_schema(path: &str, method: &str) -> Option<&'static str> {
+    match (path, method) {
+        ("/auth/login", "post") => Some("PhonePasswordRequest"),
+        ("/auth/register", "post") => Some("RegisterRequest"),
+        ("/auth/phone/otp", "post") => Some("PhoneRequest"),
+        ("/auth/phone/verify", "post") => Some("PhoneOtpRequest"),
+        ("/auth/email/otp", "post") => Some("EmailRequest"),
+        ("/auth/email/verify", "post") => Some("EmailOtpRequest"),
+        ("/auth/unlock", "post") => Some("UnlockRequest"),
+        ("/auth/pin", "put") => Some("SetPinRequest"),
+        ("/auth/pin", "delete") => Some("CurrentPasswordRequest"),
+        ("/auth/password", "put") => Some("ChangePasswordRequest"),
+        ("/admin-users", "post") => Some("AdminUserRequest"),
+        _ => None,
+    }
+}
+
 /// Published schema for endpoints currently implemented by this server.
 pub fn document() -> OpenApi {
     let mut paths = Map::new();
     let endpoints: &[(&str, &[(&str, u16)])] = &[
         ("/auth/csrf", &[("get", 200)]),
         ("/auth/login", &[("post", 200)]),
+        ("/auth/register", &[("post", 201)]),
+        ("/auth/phone/otp", &[("post", 204)]),
+        ("/auth/phone/verify", &[("post", 204)]),
+        ("/auth/email/otp", &[("post", 204)]),
+        ("/auth/email/verify", &[("post", 204)]),
         ("/auth/logout", &[("post", 204)]),
         ("/auth/session", &[("get", 200)]),
         ("/auth/sessions", &[("get", 200)]),
@@ -46,7 +68,13 @@ pub fn document() -> OpenApi {
         for (method, success) in *methods {
             let public = matches!(
                 *relative,
-                "/health" | "/ready" | "/auth/csrf" | "/auth/login"
+                "/health"
+                    | "/ready"
+                    | "/auth/csrf"
+                    | "/auth/login"
+                    | "/auth/register"
+                    | "/auth/phone/otp"
+                    | "/auth/phone/verify"
             );
             let unsafe_method = *method != "get";
             let idempotent = unsafe_method
@@ -71,6 +99,15 @@ pub fn document() -> OpenApi {
             }
             if unsafe_method {
                 parameters.push(json!({"name":"X-CSRF-Token","in":"header","required":true,"schema":{"type":"string"}}));
+                parameters.push(json!({"name":"Origin","in":"header","required":true,"schema":{"type":"string","format":"uri"}}));
+            }
+            if unsafe_method
+                && matches!(
+                    *relative,
+                    "/auth/register" | "/auth/phone/otp" | "/auth/phone/verify"
+                )
+            {
+                parameters.push(json!({"name":"mc_csrf_anon","in":"cookie","required":true,"schema":{"type":"string"},"description":"Cookie returned by GET /auth/csrf."}));
             }
             if idempotent {
                 parameters.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","format":"uuid"}}));
@@ -87,9 +124,20 @@ pub fn document() -> OpenApi {
             if !public {
                 operation["security"] = json!([{"sessionCookie":[]}]);
             }
-            if unsafe_method && *success != 204 && *relative != "/projects/{id}/members/{member_id}"
+            let body_schema = auth_request_schema(relative, method);
+            let has_request_body = body_schema.is_some() || (*success != 204 && unsafe_method);
+            if unsafe_method
+                && has_request_body
+                && *relative != "/projects/{id}/members/{member_id}"
             {
-                operation["requestBody"] = json!({"required":true,"content":{"application/json":{"schema":{"type":"object"}}}});
+                operation["requestBody"] = match body_schema {
+                    Some(schema) => {
+                        json!({"required":true,"content":{"application/json":{"schema":{"$ref":format!("#/components/schemas/{schema}")}}}})
+                    }
+                    None => {
+                        json!({"required":true,"content":{"application/json":{"schema":{"type":"object"}}}})
+                    }
+                };
             }
             operations.insert((*method).to_owned(), operation);
         }
@@ -99,7 +147,23 @@ pub fn document() -> OpenApi {
         "openapi":"3.1.0",
         "info":{"title":"Church Contributions API","version":"1.0.0","description":"Implemented v1 endpoints. The full proposed contract includes additional endpoints not yet available."},
         "paths":paths,
-        "components":{"securitySchemes":{"sessionCookie":{"type":"apiKey","in":"cookie","name":"mc_session"}},"schemas":{"Problem":{"type":"object","required":["type","title","status","code","detail","requestId"],"properties":{"type":{"type":"string"},"title":{"type":"string"},"status":{"type":"integer"},"code":{"type":"string"},"detail":{"type":"string"},"requestId":{"type":"string","format":"uuid"}}}}}
+        "components":{
+            "securitySchemes":{"sessionCookie":{"type":"apiKey","in":"cookie","name":"mc_session"}},
+            "schemas":{
+                "Problem":{"type":"object","required":["type","title","status","code","detail","requestId"],"properties":{"type":{"type":"string"},"title":{"type":"string"},"status":{"type":"integer"},"code":{"type":"string"},"detail":{"type":"string"},"requestId":{"type":"string","format":"uuid"},"errors":{"type":"array","description":"Present on validation errors; each entry identifies the invalid field using a JSON Pointer.","items":{"type":"object","required":["field","code","message"],"properties":{"field":{"type":"string"},"code":{"type":"string"},"message":{"type":"string"}}}}}},
+                "PhonePasswordRequest":{"type":"object","required":["phone","password"],"additionalProperties":false,"properties":{"phone":{"type":"string","description":"Ugandan mobile number; accepted formats are normalized to 2567…"},"password":{"type":"string"}}},
+                "RegisterRequest":{"type":"object","required":["name","phone","password"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"phone":{"type":"string","description":"Ugandan mobile number in any common format."},"password":{"type":"string","minLength":8,"maxLength":1024},"email":{"type":"string","format":"email","description":"Optional email address."}}},
+                "PhoneRequest":{"type":"object","required":["phone"],"additionalProperties":false,"properties":{"phone":{"type":"string"}}},
+                "PhoneOtpRequest":{"type":"object","required":["phone","otp"],"additionalProperties":false,"properties":{"phone":{"type":"string"},"otp":{"type":"string","pattern":"^[0-9]{5}$"}}},
+                "EmailRequest":{"type":"object","required":["email"],"additionalProperties":false,"properties":{"email":{"type":"string","format":"email"}}},
+                "EmailOtpRequest":{"type":"object","required":["email","otp"],"additionalProperties":false,"properties":{"email":{"type":"string","format":"email"},"otp":{"type":"string","pattern":"^[0-9]{5}$"}}},
+                "UnlockRequest":{"type":"object","required":["method","credential"],"additionalProperties":false,"properties":{"method":{"type":"string","enum":["password","pin"]},"credential":{"type":"string"}}},
+                "SetPinRequest":{"type":"object","required":["currentPassword","newPin"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"},"newPin":{"type":"string","pattern":"^[0-9]{4,12}$"}}},
+                "CurrentPasswordRequest":{"type":"object","required":["currentPassword"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"}}},
+                "ChangePasswordRequest":{"type":"object","required":["currentPassword","newPassword"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"},"newPassword":{"type":"string","minLength":8,"maxLength":1024}}},
+                "AdminUserRequest":{"type":"object","required":["name","phone","password"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"phone":{"type":"string"},"password":{"type":"string","minLength":8}}}
+            }
+        }
     })).expect("valid generated OpenAPI")
 }
 

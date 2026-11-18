@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Query, Request, rejection::JsonRejection},
+    extract::{FromRequest, FromRequestParts, Request, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -15,6 +15,14 @@ pub(crate) struct Problem {
     status: StatusCode,
     code: &'static str,
     detail: &'static str,
+    errors: Option<Vec<FieldError>>,
+}
+
+#[derive(Debug, Serialize)]
+struct FieldError {
+    field: String,
+    code: String,
+    message: String,
 }
 
 impl Problem {
@@ -23,14 +31,29 @@ impl Problem {
             status,
             code,
             detail,
+            errors: None,
         }
     }
-    pub(crate) fn validation() -> Self {
-        Self::new(
+    pub(crate) fn field_validation(
+        field: impl Into<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let mut problem = Self::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation_error",
             "One or more fields are invalid.",
-        )
+        );
+        problem.errors = Some(vec![FieldError {
+            field: field.into(),
+            code: code.into(),
+            message: message.into(),
+        }]);
+        problem
+    }
+    fn validation_from_decode(path: &str, error: &str) -> Self {
+        let (field, code, message) = decode_error_details(path, error);
+        Self::field_validation(field, code, message)
     }
     pub(crate) fn unauthorized() -> Self {
         Self::new(
@@ -69,7 +92,7 @@ impl IntoResponse for Problem {
             "title": self.status.canonical_reason().unwrap_or("Error"),
             "status": self.status.as_u16(), "code": self.code,
             "detail": self.detail, "requestId": Uuid::new_v4(),
-            "errors": if self.status == StatusCode::UNPROCESSABLE_ENTITY { Some(Vec::<Value>::new()) } else { None },
+            "errors": if self.status == StatusCode::UNPROCESSABLE_ENTITY { self.errors } else { None },
         }))).into_response();
         response.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -82,6 +105,96 @@ impl IntoResponse for Problem {
         }
         no_store(response)
     }
+}
+
+fn decode_error_details(path: &str, error: &str) -> (String, String, String) {
+    let missing = quoted_field(error, "missing field ");
+    let unknown = quoted_field(error, "unknown field ");
+    let field_name = missing.as_ref().or(unknown.as_ref());
+    let field = if path.is_empty() {
+        field_name
+            .map(String::as_str)
+            .map(json_pointer_segment)
+            .unwrap_or_else(|| "/".to_owned())
+    } else {
+        path_to_json_pointer(path)
+    };
+
+    if missing.is_some() {
+        return (
+            field,
+            "required".to_owned(),
+            "This field is required.".to_owned(),
+        );
+    }
+    if unknown.is_some() {
+        return (
+            field,
+            "unknown_field".to_owned(),
+            "This field is not recognized. Remove it or check the field name.".to_owned(),
+        );
+    }
+    if let Some((_, expected)) = error.rsplit_once(", expected ") {
+        return (
+            field,
+            "invalid_type".to_owned(),
+            format!("Expected {expected}."),
+        );
+    }
+    (
+        field,
+        "invalid_value".to_owned(),
+        "This value has an invalid format or type.".to_owned(),
+    )
+}
+
+fn quoted_field(error: &str, prefix: &str) -> Option<String> {
+    let rest = error.strip_prefix(prefix)?;
+    let (_, field) = rest.split_once('`')?;
+    Some(field.split('`').next()?.to_owned())
+}
+
+fn json_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+fn path_to_json_pointer(path: &str) -> String {
+    let mut segments = Vec::new();
+    let mut segment = String::new();
+    let mut in_index = false;
+    for character in path.chars() {
+        match character {
+            '.' if !in_index => {
+                if !segment.is_empty() {
+                    segments.push(std::mem::take(&mut segment));
+                }
+            }
+            '[' => {
+                if !segment.is_empty() {
+                    segments.push(std::mem::take(&mut segment));
+                }
+                in_index = true;
+            }
+            ']' => {
+                if !segment.is_empty() {
+                    segments.push(std::mem::take(&mut segment));
+                }
+                in_index = false;
+            }
+            _ => segment.push(character),
+        }
+    }
+    if !segment.is_empty() {
+        segments.push(segment);
+    }
+    format!(
+        "/{}",
+        segments
+            .iter()
+            .map(|segment| json_pointer_segment(segment))
+            .collect::<Vec<_>>()
+            .join("/")
+    )
 }
 
 pub(crate) fn no_store(mut response: Response) -> Response {
@@ -123,21 +236,17 @@ where
 {
     type Rejection = Problem;
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
+        let value = Json::<Value>::from_request(req, state)
             .await
-            .map(|Json(value)| Self(value))
-            .map_err(|error| match error {
-                JsonRejection::JsonDataError(_) => Problem::validation(),
-                JsonRejection::MissingJsonContentType(_) => Problem::new(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    "unsupported_media_type",
-                    "Content-Type must be application/json.",
-                ),
-                _ => Problem::new(
-                    StatusCode::BAD_REQUEST,
-                    "malformed_json",
-                    "Request JSON is malformed.",
-                ),
+            .map_err(json_rejection_problem)?
+            .0;
+        serde_path_to_error::deserialize(value)
+            .map(Self)
+            .map_err(|error| {
+                Problem::validation_from_decode(
+                    &error.path().to_string(),
+                    &error.inner().to_string(),
+                )
             })
     }
 }
@@ -150,12 +259,34 @@ where
     type Rejection = Problem;
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        state: &S,
+        _state: &S,
     ) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request_parts(parts, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|_| Problem::validation())
+        let query = parts.uri.query().unwrap_or_default();
+        let deserializer =
+            serde_urlencoded::Deserializer::new(form_urlencoded::parse(query.as_bytes()));
+        serde_path_to_error::deserialize(deserializer)
+            .map(Self)
+            .map_err(|error| {
+                Problem::validation_from_decode(
+                    &error.path().to_string(),
+                    &error.inner().to_string(),
+                )
+            })
+    }
+}
+
+fn json_rejection_problem(error: JsonRejection) -> Problem {
+    match error {
+        JsonRejection::MissingJsonContentType(_) => Problem::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "Content-Type must be application/json.",
+        ),
+        _ => Problem::new(
+            StatusCode::BAD_REQUEST,
+            "malformed_json",
+            "Request body must contain valid JSON.",
+        ),
     }
 }
 pub(crate) fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, Problem> {
@@ -208,7 +339,13 @@ pub(crate) fn if_match(headers: &HeaderMap, id: Uuid, version: i64) -> Result<()
 pub(crate) fn req_key(headers: &HeaderMap) -> Result<Uuid, Problem> {
     header_str(headers, "idempotency-key")?
         .parse()
-        .map_err(|_| Problem::validation())
+        .map_err(|_| {
+            Problem::new(
+                StatusCode::BAD_REQUEST,
+                "malformed_header",
+                "Idempotency-Key must be a valid UUID.",
+            )
+        })
 }
 
 pub(crate) fn list_response(data: Vec<Value>, meta: Value) -> Response {

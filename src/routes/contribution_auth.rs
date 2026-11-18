@@ -15,6 +15,26 @@ pub fn router() -> Router<AppState> {
             post(crate::controller::contribution_auth::login),
         )
         .route(
+            "/auth/register",
+            post(crate::controller::contribution_auth::register),
+        )
+        .route(
+            "/auth/phone/otp",
+            post(crate::controller::contribution_auth::request_phone_otp),
+        )
+        .route(
+            "/auth/phone/verify",
+            post(crate::controller::contribution_auth::verify_phone),
+        )
+        .route(
+            "/auth/email/otp",
+            post(crate::controller::contribution_auth::request_email_otp),
+        )
+        .route(
+            "/auth/email/verify",
+            post(crate::controller::contribution_auth::verify_email),
+        )
+        .route(
             "/auth/logout",
             post(crate::controller::contribution_auth::logout),
         )

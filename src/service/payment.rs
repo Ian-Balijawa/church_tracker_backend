@@ -77,10 +77,7 @@ pub(crate) async fn recalculate(
     primary_payment: Option<Uuid>,
 ) -> Result<contributions_domain::Replay, Problem> {
     let (pledges, payments) = load_ledger_tx(tx, org, member).await?;
-    let result = replay(&pledges, &payments, today()).map_err(|error| {
-        tracing::error!(%error,"ledger replay failed");
-        Problem::validation()
-    })?;
+    let result = replay(&pledges, &payments, today()).map_err(Problem::internal)?;
     for payment in &payments {
         let old=sqlx::query("SELECT id,pledge_id,period_start,period_end,amount FROM allocations WHERE payment_id=$1 ORDER BY period_end,period_start,pledge_id")
             .bind(payment.id).fetch_all(&mut **tx).await.map_err(db_error)?;
