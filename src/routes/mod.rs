@@ -1,10 +1,10 @@
-pub mod church;
-pub mod contribution_auth;
-pub mod health;
-pub mod member;
-pub mod payment;
-pub mod pledge;
-pub mod project;
+pub use crate::auth::routes as contribution_auth;
+pub use crate::church::routes as church;
+pub use crate::health::routes as health;
+pub use crate::member::routes as member;
+pub use crate::payment::routes as payment;
+pub use crate::pledge::routes as pledge;
+pub use crate::project::routes as project;
 
 use crate::AppState;
 use axum::Router;
