@@ -23,4 +23,16 @@ pub fn router() -> Router<AppState> {
             "/payments/preview",
             post(crate::controller::payment::preview_payment),
         )
+        .route(
+            "/payments/collections",
+            post(crate::controller::payment::create_collection),
+        )
+        .route(
+            "/payments/collections/{id}",
+            get(crate::controller::payment::get_collection),
+        )
+        .route(
+            "/payments/webhooks/marzpay",
+            post(crate::controller::payment::marzpay_webhook),
+        )
 }

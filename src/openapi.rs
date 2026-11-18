@@ -55,6 +55,9 @@ pub fn document() -> OpenApi {
         ("/payments/{id}", &[("get", 200)]),
         ("/payments/{id}/void", &[("post", 200)]),
         ("/payments/preview", &[("post", 200)]),
+        ("/payments/collections", &[("post", 201)]),
+        ("/payments/collections/{id}", &[("get", 200)]),
+        ("/payments/webhooks/marzpay", &[("post", 200)]),
         ("/health", &[("get", 200)]),
         ("/ready", &[("get", 200)]),
     ];
@@ -75,11 +78,13 @@ pub fn document() -> OpenApi {
                     | "/auth/register"
                     | "/auth/phone/otp"
                     | "/auth/phone/verify"
+                    | "/payments/webhooks/marzpay"
             );
             let unsafe_method = *method != "get";
             let idempotent = unsafe_method
                 && !relative.starts_with("/auth/")
                 && *relative != "/payments/preview"
+                && *relative != "/payments/webhooks/marzpay"
                 && *relative != "/admin-users";
             let conditional = matches!(
                 *relative,
@@ -97,9 +102,13 @@ pub fn document() -> OpenApi {
                     parameters.push(json!({"name":name,"in":"path","required":true,"schema":{"type":"string","format":"uuid"}}));
                 }
             }
-            if unsafe_method {
+            if unsafe_method && *relative != "/payments/webhooks/marzpay" {
                 parameters.push(json!({"name":"X-CSRF-Token","in":"header","required":true,"schema":{"type":"string"}}));
                 parameters.push(json!({"name":"Origin","in":"header","required":true,"schema":{"type":"string","format":"uri"}}));
+            }
+            if *relative == "/payments/webhooks/marzpay" {
+                parameters.push(json!({"name":"X-MarzPay-Timestamp","in":"header","required":false,"schema":{"type":"string"},"description":"Required when MARZ_PAY_WEBHOOK_SECRET is configured."}));
+                parameters.push(json!({"name":"X-MarzPay-Signature","in":"header","required":false,"schema":{"type":"string"},"description":"Required when MARZ_PAY_WEBHOOK_SECRET is configured."}));
             }
             if unsafe_method
                 && matches!(
@@ -117,14 +126,22 @@ pub fn document() -> OpenApi {
             }
             let mut responses = Map::new();
             responses.insert(success.to_string(), if *success == 204 { json!({"description":"No content"}) } else { json!({"description":"Success","content":{"application/json":{"schema":{"type":"object"}}}}) });
-            for code in [400, 401, 403, 404, 409, 412, 415, 422, 428, 429, 500] {
+            for code in [
+                400, 401, 403, 404, 409, 412, 415, 422, 428, 429, 500, 502, 503,
+            ] {
                 responses.insert(code.to_string(),json!({"description":"Problem detail","content":{"application/problem+json":{"schema":{"$ref":"#/components/schemas/Problem"}}}}));
             }
             let mut operation = json!({"operationId":format!("{}_{}",method,relative.trim_matches('/').replace(['/', '{', '}', '-'], "_")),"tags":[relative.split('/').nth(1).unwrap_or("health")],"responses":responses,"parameters":parameters});
             if !public {
                 operation["security"] = json!([{"sessionCookie":[]}]);
             }
-            let body_schema = auth_request_schema(relative, method);
+            let body_schema = auth_request_schema(relative, method).or_else(|| {
+                if *relative == "/payments/collections" && *method == "post" {
+                    Some("CreateCollectionRequest")
+                } else {
+                    None
+                }
+            });
             let has_request_body = body_schema.is_some() || (*success != 204 && unsafe_method);
             if unsafe_method
                 && has_request_body
@@ -161,7 +178,8 @@ pub fn document() -> OpenApi {
                 "SetPinRequest":{"type":"object","required":["currentPassword","newPin"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"},"newPin":{"type":"string","pattern":"^[0-9]{4,12}$"}}},
                 "CurrentPasswordRequest":{"type":"object","required":["currentPassword"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"}}},
                 "ChangePasswordRequest":{"type":"object","required":["currentPassword","newPassword"],"additionalProperties":false,"properties":{"currentPassword":{"type":"string"},"newPassword":{"type":"string","minLength":8,"maxLength":1024}}},
-                "AdminUserRequest":{"type":"object","required":["name","phone","password"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"phone":{"type":"string"},"password":{"type":"string","minLength":8}}}
+                "AdminUserRequest":{"type":"object","required":["name","phone","password"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":200},"phone":{"type":"string"},"password":{"type":"string","minLength":8}}},
+                "CreateCollectionRequest":{"type":"object","required":["memberId","amount","phone"],"additionalProperties":false,"properties":{"memberId":{"type":"string","format":"uuid"},"projectId":{"type":"string","format":"uuid"},"amount":{"type":"integer","minimum":500,"maximum":10000000,"description":"Whole UGX amount."},"phone":{"type":"string","description":"Ugandan MTN or Airtel number. Common local and international formats are accepted and normalized."},"description":{"type":"string","maxLength":255}}}
             }
         }
     })).expect("valid generated OpenAPI")

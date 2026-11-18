@@ -23,6 +23,7 @@ sea-orm = { version = "2.0.2", features = ["runtime-tokio-rustls", "sqlx-postgre
 sea-orm-migration = { version = "2.0.2", features = ["runtime-tokio-rustls", "sqlx-postgres"] }
 redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 sha2 = "0.10"
+hmac = "0.12"
 percent-encoding = "2"
 thiserror = "2"
 inventory = "0.3"

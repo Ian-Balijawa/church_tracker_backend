@@ -4,6 +4,16 @@ use uuid::Uuid;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CreateCollectionBody {
+    pub(crate) member_id: Uuid,
+    pub(crate) project_id: Option<Uuid>,
+    pub(crate) amount: i64,
+    pub(crate) phone: String,
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PaymentCreate {
     pub(crate) id: Uuid,
     pub(crate) member_id: Uuid,

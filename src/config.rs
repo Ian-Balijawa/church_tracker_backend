@@ -17,6 +17,11 @@ pub struct Config {
     pub jwt_secret: String,
     pub jwt_issuer: String,
     pub jwt_audience: String,
+    pub marz_pay_base_url: String,
+    pub marz_pay_api_key: Option<String>,
+    pub marz_pay_api_secret: Option<String>,
+    pub marz_pay_webhook_secret: Option<String>,
+    pub public_api_url: Option<String>,
 }
 
 impl Config {
@@ -77,6 +82,12 @@ impl Config {
                 .unwrap_or_else(|_| "church-contributions-api".to_owned()),
             jwt_audience: env::var("JWT_AUDIENCE")
                 .unwrap_or_else(|_| "church-contributions-client".to_owned()),
+            marz_pay_base_url: env::var("MARZ_PAY_BASE_URL")
+                .unwrap_or_else(|_| "https://wallet.wearemarz.com/api/v1".to_owned()),
+            marz_pay_api_key: env::var("MARZ_PAY_API_KEY").ok(),
+            marz_pay_api_secret: env::var("MARZ_PAY_API_SECRET").ok(),
+            marz_pay_webhook_secret: env::var("MARZ_PAY_WEBHOOK_SECRET").ok(),
+            public_api_url: env::var("PUBLIC_API_URL").ok(),
         })
     }
 }
